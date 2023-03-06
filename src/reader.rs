@@ -1,6 +1,8 @@
 use std::{
     fs::File,
     io::{ErrorKind, Read, Seek, SeekFrom},
+    ptr::NonNull,
+    sync::Arc,
 };
 
 use bit_set::BitSet;
@@ -1001,7 +1003,7 @@ impl<'a, R: Read> Iterator for NamesReader<'a, R> {
 }
 
 pub struct SevenZReader<R: Read + Seek> {
-    source: R,
+    source: UnsafeReader<R>,
     archive: Archive,
     password: Vec<u8>,
 }
@@ -1023,25 +1025,25 @@ impl<R: Read + Seek> SevenZReader<R> {
         let password = password.to_vec();
         let archive = Archive::read(&mut source, reader_len, &password)?;
         Ok(Self {
-            source,
+            source: UnsafeReader::new(source),
             archive,
             password,
         })
     }
 
     fn build_decode_stack<'r>(
-        &self,
-        source: &'r mut R,
+        &'r self,
         folder_index: usize,
+        file_offset: u64,
     ) -> Result<(Box<dyn Read + 'r>, usize), Error> {
         let first_pack_stream_index =
             self.archive.stream_map.folder_first_pack_stream_index[folder_index];
         let folder_offset = SIGNATURE_HEADER_SIZE
             + self.archive.pack_pos
             + self.archive.stream_map.pack_stream_offsets[first_pack_stream_index];
-
+        let mut source = self.source.clone();
         source
-            .seek(SeekFrom::Start(folder_offset))
+            .seek(SeekFrom::Start(folder_offset + file_offset))
             .map_err(Error::io)?;
         let pack_size = self.archive.pack_sizes[first_pack_stream_index] as usize;
 
@@ -1080,7 +1082,6 @@ impl<R: Read + Seek> SevenZReader<R> {
         let mut entry_index = 0;
         let mut current_folder_index = -1;
         let mut curent_reader: Option<Box<dyn Read>> = None;
-        let reader = (&mut self.source) as *mut R;
 
         for file in self.archive.files.iter() {
             let folder_index = self.archive.stream_map.file_folder_index[entry_index];
@@ -1089,15 +1090,15 @@ impl<R: Read + Seek> SevenZReader<R> {
                 f
             } else {
                 entry_index += 1;
-                let empty_reader: &mut dyn Read = &mut ([0u8; 0].as_slice());
-                each(file, empty_reader)?;
+                let mut er = EmptyReader();
+                each(file, &mut er)?;
                 continue;
             };
 
             if current_folder_index != folder_index as i32 {
                 current_folder_index = folder_index as i32;
 
-                match self.build_decode_stack(unsafe { &mut *reader }, folder_index) {
+                match self.build_decode_stack(folder_index, 0) {
                     Ok((mut read, _size)) => {
                         {
                             let mut decoder: Box<dyn Read> =
@@ -1140,15 +1141,170 @@ impl<R: Read + Seek> SevenZReader<R> {
         }
         Ok(())
     }
+
+    pub fn decode_each_entries<F>(mut self, mut each: F) -> Result<(), Error>
+    where
+        F: FnMut(EntryDecoder<R>) -> Result<bool, Error>,
+    {
+        for i in 0..self.archive.files.len() {
+            let folder_index = self.archive.stream_map.file_folder_index[i];
+            if let Some(folder_index) = folder_index {
+                let folder = &self.archive.folders[folder_index];
+                let mut method_confs = Vec::with_capacity(folder.coders.len());
+                for coder in &folder.coders {
+                    let mid = coder.decompression_method_id();
+                    let method = if let Some(m) = SevenZMethod::by_id(mid) {
+                        m
+                    } else {
+                        return Err(Error::UnsupportedCompressionMethod(format!("{:?}", mid)));
+                    };
+                    let config = SevenZMethodConfiguration::new(method)
+                        .with_options(crate::MethodOptions::Raw(coder.properties.clone()));
+
+                    method_confs.push(config);
+                }
+                self.archive.files[i].content_methods = Arc::new(method_confs);
+                self.archive.files[i].compressed_size = self.archive.pack_sizes[folder_index];
+                if self.archive.pack_crcs_defined.contains(folder_index) {
+                    self.archive.files[i].compressed_crc = self.archive.pack_crcs[folder_index];
+                }
+                // self.archive.files[i].
+            }
+            if !each(EntryDecoder {
+                folder_index,
+                entry_index: i,
+                reader: &mut self,
+            })? {
+                break;
+            }
+        }
+
+        Ok(())
+    }
 }
 
-pub struct FolderDecoder<'a, R: Read + Seek> {
-    folder_index: usize,
+struct EmptyReader();
+impl Read for EmptyReader {
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(0)
+    }
+}
+pub struct EntryDecoder<'a, R: Read + Seek> {
+    folder_index: Option<usize>,
+    entry_index: usize,
     reader: &'a mut SevenZReader<R>,
 }
 
-// impl<'a, R: Read + Seek> FolderDecoder<'a, R> {
-//     pub fn entries(&self)->&SevenZArchiveEntry{
-//         self.reader.archive.stream_map.folder_first_file_index[self.folder_index];
-//     }
-// }
+impl<'a, R: Read + Seek> EntryDecoder<'a, R> {
+    pub fn entry(&self) -> &SevenZArchiveEntry {
+        &self.reader.archive.files[self.entry_index]
+    }
+
+    pub fn unpack_sizes(&self)->&[u64]{
+        let folder_index = if let Some(i) = self.folder_index {
+            i
+        } else {
+            return &[];
+        };
+        &self.reader.archive.folders[folder_index].unpack_sizes
+    }
+
+    pub fn decoded_reader<'r>(&'r mut self) -> Result<Box<dyn Read + 'r>, Error> {
+        let folder_index = if let Some(i) = self.folder_index {
+            i
+        } else {
+            return Ok(Box::new(EmptyReader()));
+        };
+        let file = &self.reader.archive.files[self.entry_index];
+        let mut file_offset = 0;
+        let first_file_index = self.reader.archive.stream_map.folder_first_file_index[folder_index];
+
+        for i in first_file_index..self.entry_index {
+            file_offset += self.reader.archive.files[i].compressed_size;
+        }
+        match self.reader.build_decode_stack(folder_index, file_offset) {
+            Ok((read, _size)) => {
+                let mut decoder: Box<dyn Read> =
+                    Box::new(BoundedReader::new(read, file.size as usize));
+                if file.has_crc {
+                    decoder = Box::new(Crc32VerifyingReader::new(
+                        decoder,
+                        file.size as usize,
+                        file.crc,
+                    ));
+                }
+                Ok(decoder)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn undecoded_reader<'r>(&'r mut self) -> Result<Box<dyn Read + 'r>, Error> {
+        let folder_index = if let Some(i) = self.folder_index {
+            i
+        } else {
+            return Ok(Box::new(EmptyReader()));
+        };
+        let first_pack_stream_index = self
+            .reader
+            .archive
+            .stream_map
+            .folder_first_pack_stream_index[folder_index];
+        let folder_offset = SIGNATURE_HEADER_SIZE
+            + self.reader.archive.pack_pos
+            + self.reader.archive.stream_map.pack_stream_offsets[first_pack_stream_index];
+        let first_file_index = self.reader.archive.stream_map.folder_first_file_index[folder_index];
+        let mut file_offset = 0;
+        for i in first_file_index..self.entry_index {
+            file_offset += self.reader.archive.files[i].compressed_size;
+        }
+        let file_size = self.reader.archive.files[self.entry_index].compressed_size as usize;
+        let pack_size = self.reader.archive.pack_sizes[first_pack_stream_index] as usize;
+        let mut source = self.reader.source.clone();
+        source
+            .seek(SeekFrom::Start(folder_offset + file_offset))
+            .map_err(Error::io)?;
+
+        let decoder = BoundedReader::new(source, pack_size);
+
+        Ok(Box::new(decoder))
+    }
+}
+
+impl<R: Read + Seek> Drop for SevenZReader<R> {
+    fn drop(&mut self) {
+        let p = self.source.0.as_ptr();
+        unsafe {
+            drop(Box::from_raw(p));
+        }
+    }
+}
+
+#[derive(Debug)]
+struct UnsafeReader<R>(NonNull<R>);
+
+impl<R> Clone for UnsafeReader<R> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+impl<R> UnsafeReader<R> {
+    fn new(r: R) -> Self {
+        unsafe {
+            let r = Box::new(r);
+            Self(NonNull::new_unchecked(Box::into_raw(r)))
+        }
+    }
+}
+
+impl<R: Read> Read for UnsafeReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        unsafe { self.0.as_mut().read(buf) }
+    }
+}
+
+impl<R: Seek> Seek for UnsafeReader<R> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        unsafe { self.0.as_mut().seek(pos) }
+    }
+}

@@ -112,6 +112,17 @@ impl SevenZArchiveEntry {
     pub fn is_anti_item(&self) -> bool {
         self.is_anti_item
     }
+
+    pub fn copy_date_from(&mut self, other: &Self) {
+        self.windows_attributes = other.windows_attributes;
+        self.has_windows_attributes = other.has_windows_attributes;
+        self.has_access_date = other.has_access_date;
+        self.access_date = other.access_date;
+        self.has_creation_date = other.has_creation_date;
+        self.creation_date = other.creation_date;
+        self.has_last_modified_date = other.has_last_modified_date;
+        self.last_modified_date = other.last_modified_date;
+    }
 }
 
 #[derive(Debug, Default)]
@@ -130,11 +141,18 @@ impl Clone for SevenZMethodConfiguration {
 }
 
 impl SevenZMethodConfiguration {
+    #[inline]
     pub fn new(method: SevenZMethod) -> Self {
         Self {
             method,
             options: None,
         }
+    }
+
+    #[inline]
+    pub fn with_options(mut self, options: MethodOptions) -> Self {
+        self.options = Some(options);
+        self
     }
 }
 

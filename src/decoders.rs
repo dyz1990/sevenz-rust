@@ -77,7 +77,7 @@ pub fn add_decoder<I: Read>(
             Ok(Decoder::LZMA(lz))
         }
         SevenZMethod::ID_LZMA2 => {
-            let dic_size = get_lzma2_dic_size(coder)?;
+            let dic_size = get_lzma2_dic_size(&coder.properties)?;
             let mem_size = lzma2_get_memery_usage(dic_size) as usize;
             if mem_size > max_mem_limit_kb {
                 return Err(Error::MaxMemLimited {
@@ -131,11 +131,11 @@ pub fn add_decoder<I: Read>(
 }
 
 #[inline]
-fn get_lzma2_dic_size(coder: &Coder) -> Result<u32, Error> {
-    if coder.properties.len() < 1 {
+pub(crate) fn get_lzma2_dic_size(props:&[u8]) -> Result<u32, Error> {
+    if props.len() < 1 {
         return Err(Error::other("LZMA2 properties too short"));
     }
-    let dict_size_bits = 0xff & coder.properties[0] as u32;
+    let dict_size_bits = 0xff & props[0] as u32;
     if (dict_size_bits & (!0x3f)) != 0 {
         return Err(Error::other("Unsupported LZMA2 property bits"));
     }

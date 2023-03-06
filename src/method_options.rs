@@ -5,6 +5,7 @@ pub enum MethodOptions {
     Num(u32),
     #[cfg(feature = "compress")]
     LZMA2(crate::lzma::LZMA2Options),
+    Raw(Vec<u8>),
 }
 
 impl From<u32> for MethodOptions {
@@ -26,6 +27,9 @@ impl MethodOptions {
             MethodOptions::Num(n) => *n,
             #[cfg(feature = "compress")]
             MethodOptions::LZMA2(o) => o.dict_size,
+            MethodOptions::Raw(props) => {
+                crate::decoders::get_lzma2_dic_size(props).unwrap_or_default()
+            }
         }
     }
 }

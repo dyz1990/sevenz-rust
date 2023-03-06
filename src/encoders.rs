@@ -73,6 +73,13 @@ pub(crate) fn get_options_as_properties<'a>(
             out[0] = prop;
             &out[0..1]
         }
-        _ => &[],
+        _ => {
+            if let Some(MethodOptions::Raw(props)) = options {
+                out[..props.len()].copy_from_slice(props);
+                &out[..props.len()]
+            } else {
+                &[]
+            }
+        }
     }
 }
