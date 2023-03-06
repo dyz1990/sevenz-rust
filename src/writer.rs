@@ -194,6 +194,37 @@ impl<W: Write + Seek> SevenZWriter<W> {
         Ok(self.files.last().unwrap())
     }
 
+    pub fn push_encoded_entry<R: Read>(
+        &mut self,
+        entry: SevenZArchiveEntry,
+        additional_sizes: Vec<usize>,
+        mut reader: R,
+    ) -> Result<()> {
+        if entry.has_stream {
+            let mut buf = [0; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(size) => {
+                        if size > 0 {
+                            self.output
+                                .write_all(&buf[..size])
+                                .map_err(|e| Error::io(e))?;
+                        } else {
+                            break;
+                        }
+                    }
+                    Err(e) => return Err(Error::io(e)),
+                }
+            }
+            // let _ = std::io::copy(&mut reader, &mut self.output).map_err(|e| Error::io(e))?;
+            self.num_non_empty_streams += 1;
+            self.additional_sizes
+                .insert(entry.name.clone(), additional_sizes);
+        }
+        self.files.push(entry);
+        Ok(())
+    }
+
     fn create_writer<'a, O: Write + 'a>(
         entry: &mut SevenZArchiveEntry,
         out: O,
@@ -279,11 +310,11 @@ impl<W: Write + Seek> SevenZWriter<W> {
         header.write_u8(K_CRC)?;
         let all_crc_defined = self.files.iter().all(|f| f.compressed_crc != 0);
         if all_crc_defined {
-        header.write_u8(1)?; // all defined
-        for entry in self.files.iter() {
-            if entry.has_stream {
-                header.write_u32::<LittleEndian>(entry.compressed_crc as u32)?;
-            }
+            header.write_u8(1)?; // all defined
+            for entry in self.files.iter() {
+                if entry.has_stream {
+                    header.write_u32::<LittleEndian>(entry.compressed_crc as u32)?;
+                }
             }
         } else {
             header.write_u8(0)?; // all defined
