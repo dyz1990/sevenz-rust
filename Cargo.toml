@@ -29,7 +29,7 @@ cbc = {version = "0.1", optional = true}
 crc = "3.0.1"
 filetime_creation = "0.2"
 lzma-rust = {path = "lzma-rust", default-features = false, version = "0.1.6"}
-nt-time = "0.6.4"
+nt-time = "0.7.0"
 rand = {version = "0.8", optional = true}
 sha2 = {version = "^0.10"}
 zstd = {version = "0.13.0", optional = true}
