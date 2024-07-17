@@ -102,7 +102,7 @@ impl LZDecoder {
                 let buf_ptr = self.buf.as_mut_ptr();
                 let src = buf_ptr.add(back);
                 let dest = buf_ptr.add(self.pos);
-                std::ptr::copy_nonoverlapping(src, dest, copy_size);
+                std::ptr::copy(src, dest, copy_size);
             }
             self.pos += copy_size;
             back = 0;
@@ -126,7 +126,7 @@ impl LZDecoder {
                 let buf_ptr = self.buf.as_mut_ptr();
                 let src = buf_ptr.add(back);
                 let dest = buf_ptr.add(pos);
-                std::ptr::copy_nonoverlapping(src, dest, copy_size);
+                std::ptr::copy(src, dest, copy_size);
             }
 
             self.pos += copy_size;

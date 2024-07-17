@@ -28,7 +28,7 @@ bzip2 = {version = "0.4.4", optional = true}
 cbc = {version = "0.1", optional = true}
 crc = "3.0.1"
 filetime_creation = "0.2"
-lzma-rust = {path = "lzma-rust", default-features = false, version = "0.1.6"}
+lzma-rust = {path = "lzma-rust", default-features = false, version = "0.1.7"}
 nt-time = "0.8.0"
 rand = {version = "0.8", optional = true}
 sha2 = {version = "^0.10"}

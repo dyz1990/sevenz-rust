@@ -5,7 +5,7 @@ homepage = "https://github.com/dyz1990/sevenz-rust/tree/main/lzma-rust"
 name = "lzma-rust"
 repository = "https://github.com/dyz1990/sevenz-rust/tree/main/lzma-rust"
 rust-version = "1.60.0"
-version = "0.1.6"
+version = "0.1.7"
 keywords = ["lzma"]
 license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

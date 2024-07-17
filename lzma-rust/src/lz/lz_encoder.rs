@@ -249,7 +249,7 @@ impl LZEncoderData {
         let offset = move_offset as usize;
         let end = offset + move_size;
         unsafe {
-            std::ptr::copy_nonoverlapping(
+            std::ptr::copy(
                 self.buf[offset..end].as_ptr(),
                 self.buf[0..].as_mut_ptr(),
                 move_size,
