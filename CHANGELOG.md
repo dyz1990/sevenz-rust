@@ -1,3 +1,6 @@
+### 0.6.1 2024-0717
+- Fixed 'unsafe precondition(s) violated'. Closed #63
+
 ### 0.6.0 2024-0405
 - Added support for encrypted headers - close #55
 - Return a consistent error in case the password is invalid - close #53
